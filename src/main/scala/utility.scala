@@ -10,61 +10,38 @@ import scala.collection.{ mutable, immutable }
  * than the file it will create
  */
 
-class FunctionWithResultPath(val resultPath: File, val fn: () => File) {
+class FunctionWithResultPath(val resultPath: File, val fn: () => Unit)
+{
   import java.security.MessageDigest
 
-  private def md5(s: String) =
-    MessageDigest.getInstance("MD5").digest(s.getBytes).map(
-      "%02X" format _).mkString
+  private def md5(s: String) = MessageDigest.getInstance("MD5").digest(s.getBytes).map("%02X" format _).mkString
 
-  def apply() = fn()
+  def apply() = { fn(); resultPath }
   def runIfNotCached(stateCacheDir: File, inputDeps: Seq[File]) =
-    {
-      val resultPathHash = md5(resultPath.toString)
-      val lazyBuild = FileFunction.cached(
-        stateCacheDir / resultPathHash,
-        FilesInfo.lastModified,
-        FilesInfo.exists) { _ =>
-          Set(fn())
-        }
-      lazyBuild(inputDeps.toSet)
-
-      resultPath
+  {
+    val resultPathHash = md5(resultPath.toString)
+    val lazyBuild = FileFunction.cached( stateCacheDir / resultPathHash, FilesInfo.lastModified, FilesInfo.exists)
+    { _ =>
+    
+      IO.delete( resultPath )
+      fn()
+      Set(resultPath)
     }
-}
+      
+    lazyBuild(inputDeps.toSet)
 
-object FunctionWithResultPath {
-  def apply(resultPath: File)(fn: File => Unit): FunctionWithResultPath = {
-    new FunctionWithResultPath(
-      resultPath,
-      () => { fn(resultPath); resultPath })
+    resultPath
   }
 }
 
-class ProcessOutputToString(
-  val mergeToStdout: Boolean = false) extends ProcessLogger {
-  val stderr = mutable.ArrayBuffer[String]()
-  val stdout = mutable.ArrayBuffer[String]()
-
-  def stderrAppend(s: String) = this.synchronized {
-    stderr.append(s)
+object FunctionWithResultPath
+{
+  def apply(resultPath: File)(fn: File => Unit): FunctionWithResultPath =
+  {
+    new FunctionWithResultPath( resultPath, () => { fn(resultPath) })
   }
-
-  def stdoutAppend(s: String) = this.synchronized {
-    stdout.append(s)
-  }
-
-  override def buffer[T](f: => T) = f
-  override def error(s: => String) =
-    if (mergeToStdout) stdoutAppend(s) else stderrAppend(s)
-  override def info(s: => String) = stdoutAppend(s)
 }
 
-class ProcessOutputToLog(val log: Logger) extends ProcessOutputToString {
-  override def buffer[T](f: => T) = f
-  override def error(s: => String) = { super.error(s); log.error(s) }
-  override def info(s: => String) = { super.info(s); log.info(s) }
-}
 
 class HeaderConfigFile(private val fileName: File) {
   private val defs = mutable.ArrayBuffer[(String, String)]()
@@ -80,16 +57,15 @@ class HeaderConfigFile(private val fileName: File) {
 }
 
 object HeaderConfigFile {
-  def apply(log: Logger, compiler: Compiler, fileName: File)(
-      fn: HeaderConfigFile => Unit): File = {
-      FunctionWithResultPath(fileName) { _ =>
+  def apply(log: Logger, compiler: Compiler, fileName: File)( fn: HeaderConfigFile => Unit): File =
+  {
+      FunctionWithResultPath(fileName)
+      { _ =>
         val hcf = new HeaderConfigFile(fileName)
 
         fn(hcf)
 
         hcf.write()
-
-        fileName
       }()
     }
 }
